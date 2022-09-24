@@ -1,19 +1,21 @@
 import copy
 import sys
+import os
 
 import numpy as np
 
 import cluster_hue_sat_funcs
 import tracking_helpers
 
-sys.path.insert(0, './yolov5')
+sys.path.insert(0, '.' + os.path.sep + 'yolov5')
+os.environ['Path']
+
 
 from yolov5.utils.google_utils import attempt_download
 from yolov5.models.experimental import attempt_load
 from yolov5.utils.datasets import LoadImages, LoadStreams
 from yolov5.utils.general import check_img_size, non_max_suppression, scale_coords, check_imshow, xyxy2xywh
 from yolov5.utils.torch_utils import select_device, time_synchronized
-from yolov5.utils.plots import plot_one_box
 from deep_sort_pytorch.utils.parser import get_config
 from deep_sort_pytorch.deep_sort import DeepSort
 import argparse
@@ -25,14 +27,13 @@ from pathlib import Path
 import cv2
 import torch
 import torch.backends.cudnn as cudnn
-from multiprocessing import Process, Array, Manager
+from multiprocessing import Process
 import cluster_hue_sat_funcs as cluster_funcs
 from sklearn.cluster import KMeans
 import tensorflow as tf
 from collections import deque, Counter, namedtuple
 import tracking_helpers as track_helpers
 import logging
-
 
 palette = (2 ** 11 - 1, 2 ** 15 - 1, 2 ** 20 - 1)
 
@@ -57,10 +58,8 @@ def does_box_overlap(box, other_boxes):
 
 def compute_color_for_labels(label):
     """
-    Simple function that adds fixed color depending on the id
+    Simple function that adds fixed color depending on the class
     """
-    palette = (2 ** 11 - 1, 2 ** 15 - 1, 2 ** 20 - 1)
-
     color = [int((p * (label ** 2 - label + 1)) % 255) for p in palette]
     return tuple(color)
 
@@ -149,23 +148,27 @@ def detect(opt):
     save_path = str(Path(out))
     # extract what is in between the last '/' and last '.'
     txt_file_name = source.split(os.path.sep)[-1].split('.')[0]
-    txt_path = str(Path(out)) + os.path.sep + txt_file_name + '.txt'
+    if not args.save_path:
+        txt_path = str(Path(out)) + os.path.sep + txt_file_name + '.txt'
+    else:
+        txt_path = Path(args.save_path, txt_file_name + '.txt')
 
-    # manager = Manager()
-    # lst = manager.list()
     cluster_data = np.empty((0, 32))
     kmeans = None
     color_predictions = None
     collect_color_data = False
-    id_class_dict = {key: deque([], maxlen=20) for key in list(range(1, 200))} #Could be better optimized
+    id_class_dict = {key: deque([], maxlen=30) for key in list(range(1, 100))} #Could be better optimized
     id_centroid_dict = {}
     ids_in_last_frame = set()
     ids_to_ignore = set()
-    logging.basicConfig(handlers=[logging.FileHandler(filename=r"C:\Users\Andre\PycharmProjects\Yolov5_DeepSort_Pytorch\emerging_boxes.txt",
-                                                      encoding='utf-8', mode='w')],
-                        format="%(asctime)s %(name)s:%(levelname)s:%(message)s",
-                        datefmt="%F %A %T",
-                        level=logging.DEBUG)
+    lost_ids_with_nearest_box = set()
+    lost_ids_without_nearest_box = set()
+    txt_lines_to_write = []
+    # logging.basicConfig(handlers=[logging.FileHandler(filename=r"C:\Users\Andre\PycharmProjects\Yolov5_DeepSort_Pytorch\emerging_boxes.txt",
+    #                                                   encoding='utf-8', mode='w')],
+    #                     format="%(asctime)s %(name)s:%(levelname)s:%(message)s",
+    #                     datefmt="%F %A %T",
+    #                     level=logging.DEBUG)
 
     for frame_idx, (path, img, im0s, vid_cap) in enumerate(dataset):
         img = torch.from_numpy(img).to(device)
@@ -191,7 +194,7 @@ def detect(opt):
             else:
                 p, s, im0 = path, '', im0s
 
-            s += '%gx%g ' % img.shape[2:]  # print string
+            # s += '%gx%g ' % img.shape[2:]  # print string
             save_path = str(Path(out) / Path(p).name)
 
             if det is not None and len(det):
@@ -200,12 +203,12 @@ def detect(opt):
                     img.shape[2:], det[:, :4], im0.shape).round()
 
                 # Print results
-                for c in det[:, -1].unique():
-                    n = (det[:, -1] == c).sum()  # detections per class
-                    s += '%g %ss, ' % (n, names[int(c)])  # add to string
+                # for c in det[:, -1].unique():
+                #     n = (det[:, -1] == c).sum()  # detections per class
+                #     s += '%g %ss, ' % (n, names[int(c)])  # add to string
 
                 xywhs = xyxy2xywh(det[:, 0:4])
-                confs = det[:, 4]
+                confss = det[:, 4]
                 clss = det[:, 5]
 
                 # pass detections to deepsort
@@ -217,59 +220,51 @@ def detect(opt):
                     identities = outputs[:, -1]
                     id_set = set(map(int, identities))
 
-                    if frame_idx == 206 or frame_idx == 11:
-                        delete_this_when_notdebug = 0
+                    # tracking_helpers.check_for_new_box_appearances(ids_in_last_frame, id_set, id_centroid_dict, lost_ids_with_nearest_box,
+                    #                                                lost_ids_without_nearest_box, bboxes, frame_idx)
+                    #
+                    # if frame_idx == 206 or frame_idx == 11:
+                    #     delete_this_when_notdebug = 0
                     # Check if boxes have split
-                    new_ids_to_ignore = ids_to_ignore.copy()
-                    id_difference = id_set.symmetric_difference(ids_in_last_frame)  # boxes that have appeared or disappeared
-                    new_ids = [id for id in id_difference if id not in id_centroid_dict]
-
-                    # Check if boxes have combined
-                    id_lost = [id for id in id_difference if id in id_centroid_dict]  # filter out boxes that have already existed
-                    for id in id_lost:
-                        closest_box_id = tracking_helpers.find_closest_box(id, identities[identities != id], 125, id_centroid_dict)
-                        if closest_box_id is not None:
-                            ids_to_ignore.add(tracking_helpers.Id_pair(id, closest_box_id))
-                            logging.debug(" At frame index %d, adding ID pair [%d, %d] to the ids to ignore.", frame_idx, id, closest_box_id)
-
-                    for box, id in zip(bboxes, identities):
-                        id_centroid_dict[id] = tracking_helpers.xyxy_to_xy_centroid(box)
-                    # closest id is the id that remains while, id_pair.id is the one that was lost
-                    for id_pair in ids_to_ignore:
-                        new_id_box = None
-                        if new_ids:
-                            new_id_box = tracking_helpers.find_closest_box(id_pair.closest_id, new_ids, 125, id_centroid_dict)
-                        if new_id_box is not None:
-                            new_ids_to_ignore.remove(tracking_helpers.Id_pair(id_pair.id, id_pair.closest_id))
-                            logging.debug(f" At frame index {frame_idx}, Removing ID pair [{id_pair.id}, {id_pair.closest_id}] from the ids to ignore because {new_id_box} appeared too close.")
-                        elif id_pair.id in id_set:
-                            new_ids_to_ignore.remove(tracking_helpers.Id_pair(id_pair.id, id_pair.closest_id))
-                            logging.debug(f" At frame index {frame_idx}, Removing ID pair [{id_pair.id}, {id_pair.closest_id}] from the ids to ignore because {id_pair.id} returned.")
-                    ids_to_ignore = new_ids_to_ignore
-                    new_ids_to_ignore.clear()
-
-
-                    #Test
-                    # img_pt = copy.deepcopy(im0)
-                    # box = bboxes[0, :]
-                    # cent = tracking_helpers.xyxy_to_xy_centroid(box)
-                    # img_pt = cv2.circle(img_pt, (int(cent[0]), int(cent[1])), radius=5, color=(255, 0, 0), thickness=-1)
-                    # cv2.imshow("Centroid", img_pt)
-                    # cv2.waitKey(0)
-                    #END TEST
-                    ids_in_last_frame = set(identities.tolist())
+                    # new_ids_to_ignore = ids_to_ignore.copy()
+                    # id_difference = id_set.symmetric_difference(ids_in_last_frame)  # boxes that have appeared or disappeared
+                    # new_ids = [id for id in id_difference if id not in id_centroid_dict]
+                    #
+                    # # Check if boxes have combined
+                    # id_lost = [id for id in id_difference if id in id_centroid_dict]  # filter out boxes that have already existed
+                    # for id in id_lost:
+                    #     closest_box_id = tracking_helpers.find_closest_box(id, identities[identities != id], 125, id_centroid_dict)
+                    #     if closest_box_id is not None:
+                    #         ids_to_ignore.add(tracking_helpers.Id_pair(id, closest_box_id))
+                    #         logging.debug(" At frame index %d, adding ID pair [%d, %d] to the ids to ignore.", frame_idx, id, closest_box_id)
+                    #
+                    # for box, id in zip(bboxes, identities):
+                    #     id_centroid_dict[id] = tracking_helpers.xyxy_to_xy_centroid(box)
+                    # # closest id is the id that remains while, id_pair.id is the one that was lost
+                    # for id_pair in ids_to_ignore:
+                    #     new_id_box = None
+                    #     if new_ids:
+                    #         new_id_box = tracking_helpers.find_closest_box(id_pair.closest_id, new_ids, 125, id_centroid_dict)
+                    #     if new_id_box is not None:
+                    #         new_ids_to_ignore.remove(tracking_helpers.Id_pair(id_pair.id, id_pair.closest_id))
+                    #         logging.debug(f" At frame index {frame_idx}, Removing ID pair [{id_pair.id}, {id_pair.closest_id}] from the ids to ignore because {new_id_box} appeared too close.")
+                    #     elif id_pair.id in id_set:
+                    #         new_ids_to_ignore.remove(tracking_helpers.Id_pair(id_pair.id, id_pair.closest_id))
+                    #         logging.debug(f" At frame index {frame_idx}, Removing ID pair [{id_pair.id}, {id_pair.closest_id}] from the ids to ignore because {id_pair.id} returned.")
+                    # ids_to_ignore = new_ids_to_ignore
+                    # new_ids_to_ignore.clear()
+                    # ids_in_last_frame = set(identities.tolist())
                     hist_data = np.zeros((bboxes.shape[0], 32)) #32 is dependent on window size, number of peaks, etc..
                     hist_data = cluster_funcs.get_histogram_data(im0, bboxes, hist_data)
 
-                # p.join()
-                # hist_data = lst[0]
                 mode_in_class_id_dict = None
 
                 if frame_idx < 25 and collect_color_data:
                     cluster_data = np.vstack((cluster_data, hist_data))
                 elif frame_idx == 25:
                     # start = time.perf_counter()
-                    kmeans = KMeans(n_clusters=3, init='k-means++', random_state=0).fit(cluster_data)
+                    # kmeans = KMeans(n_clusters=3, init='k-means++', random_state=0).fit(cluster_data)
+                    kmeans = KMeans(n_clusters=2, init='k-means++', random_state=0).fit(cluster_data)
                     # print(f"Time taken to cluster = {time.perf_counter() - start}")
                 elif frame_idx > 25:
                     # start = time.perf_counter()
@@ -278,9 +273,12 @@ def detect(opt):
 
                     for predict_class, id in zip(color_predictions, identities):
                         # Filter out any predictions that are labeled as being combined boxes
-                        exists_bool_list = [True for x in ids_to_ignore if x.closest_id == int(id)]
-                        if not any(exists_bool_list):
-                            id_class_dict[id].append(predict_class)
+                        # exists_bool_list = [True for x in ids_to_ignore if x.closest_id == int(id)]
+                        # exists_bool_list = [True for x in lost_ids_with_nearest_box if x.closest_id == int(id)]
+                        # exists_bool_list2 = [True for x in lost_ids_without_nearest_box if x.id == int(id)]
+                        # exists_bool_list = exists_bool_list or exists_bool_list2
+                        # if not any(exists_bool_list):
+                        id_class_dict[id].append(predict_class)
                     mode_in_class_id_dict = cluster_hue_sat_funcs.get_counts(identities, id_class_dict)
                     # print(f"Time taken to predict = {time.perf_counter() - start}")
 
@@ -289,7 +287,7 @@ def detect(opt):
                 if len(outputs) > 0:
                     bbox_xyxy = outputs[:, :4]
                     identities = outputs[:, -1]
-                    draw_boxes(im0, bbox_xyxy, mode_in_class_id_dict, identities)
+                    draw_boxes(im0, bbox_xyxy, mode_in_class_id_dict, identities) #TODO uncomment when needed again
                     # to MOT format
                     tlwh_bboxs = xyxy_to_tlwh(bbox_xyxy)
 
@@ -303,9 +301,27 @@ def detect(opt):
                             bbox_h = tlwh_bbox[3]
                             identity = output[-1]
                             ids.append(identity)
-                            with open(txt_path, 'a') as f:
-                                f.write(('%g ' * 10 + '\n') % (frame_idx, identity, bbox_top,
-                                                            bbox_left, bbox_w, bbox_h, -1, -1, -1, -1))  # label format
+                            if frame_idx <= 25:
+                                string_line = ('%g ' * 10 + '\n') % (frame_idx, identity, bbox_top,
+                                                               bbox_left, bbox_w, bbox_h, -1, -1, -1, -1)
+                                txt_lines_to_write.append(string_line)
+                            else:
+                                classif = cluster_hue_sat_funcs.get_counts([identity], id_class_dict)
+                                string_line = (('%g ' * 10 + '\n') % (frame_idx, identity, bbox_top,
+                                                                   bbox_left, bbox_w, bbox_h, classif[identity], -1, -1,
+                                                                   -1))  # label format
+                                txt_lines_to_write.append(string_line)
+                            # with open(txt_path, 'a') as f:
+                            #     if frame_idx <= 25:
+                            #         f.write(('%g ' * 10 + '\n') % (frame_idx, identity, bbox_top,
+                            #                                    bbox_left, bbox_w, bbox_h, -1, -1, -1, -1)) # label format
+                            #     else:
+                            #         classif = cluster_hue_sat_funcs.get_counts([identity], id_class_dict)
+                            #         f.write(('%g ' * 10 + '\n') % (frame_idx, identity, bbox_top,
+                            #                                        bbox_left, bbox_w, bbox_h, classif[identity], -1, -1,
+                            #                                        -1))  # label format
+                                # f.write(('%g ' * 10 + '\n') % (frame_idx, identity, bbox_top,
+                                #                             bbox_left, bbox_w, bbox_h, -1, -1, -1, -1))  # label format
                         # Added by Andrew Hilton
                         #     cluster_save_path = r'C:\Users\Andre\PycharmProjects\Yolov5_DeepSort_Pytorch\feature_vectors.txt'
                         #     with open(cluster_save_path, 'a') as file:
@@ -354,7 +370,9 @@ def detect(opt):
             os.system('open ' + save_path)
 
     print('Done. (%.3fs)' % (time.time() - t0))
-    print(f"Everything still remaining in ids_to_ignore = {ids_to_ignore}")
+    with open(txt_path, 'a') as f:
+        f.writelines(txt_lines_to_write)
+    # vid_writer.release()
 
 
 if __name__ == '__main__':
@@ -372,6 +390,7 @@ if __name__ == '__main__':
     parser.add_argument('--show-vid', action='store_true', help='display tracking video results')
     parser.add_argument('--save-vid', action='store_true', help='save video tracking results')
     parser.add_argument('--save-txt', action='store_true', help='save MOT compliant results to *.txt')
+    parser.add_argument('--save_path', type=str, help='save MOT compliant results to *.txt')
     # class 0 is person, 1 is bycicle, 2 is car... 79 is oven
     parser.add_argument('--classes', nargs='+', type=int, help='filter by class: --class 0, or --class 16 17')
     parser.add_argument('--agnostic-nms', action='store_true', help='class-agnostic NMS')

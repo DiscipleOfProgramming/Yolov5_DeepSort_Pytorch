@@ -80,11 +80,11 @@ def get_hsv_hist(img):
 
 def crop_to_uniform(img, ratio):
     r, c, channels = img.shape
-    if c < 24:
-        sys.stderr.write(f"{c}<24\n")
-    if r < 48:
-        sys.stderr.write(f"{r}<48\n")
-    img = cv2.resize(img, (24, 48))
+    # if c < 24:
+    #     sys.stderr.write(f"{c}<24\n")
+    # if r < 48:
+    #     sys.stderr.write(f"{r}<48\n")
+    img = cv2.resize(img, (24, 48), interpolation=cv2.INTER_AREA)
     rows, cols, dims = img.shape
     quarter_rows = rows / ratio
     quarter_cols = cols / ratio
