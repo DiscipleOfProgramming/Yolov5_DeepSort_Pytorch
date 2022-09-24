@@ -21,11 +21,14 @@ HUE = 0
 SATURATION = 1
 VALUE = 2
 
+
 def get_counts(ids, classif_dict):
     id_counts = {key: None for key in ids}
     for id in ids:
-        id_counts[id] = Counter(classif_dict[id]).most_common(1)[0][0] #returns the mode
+        id_counts[id] = Counter(
+            classif_dict[id]).most_common(1)[0][0]  #returns the mode
     return id_counts
+
 
 def get_boxes(path):
     boxes = []
@@ -33,10 +36,12 @@ def get_boxes(path):
         lines = file.readlines()
         for line in lines:
             box_elements = line.split(',')
-            box = (float(box_elements[0]), float(box_elements[1]), float(box_elements[2]), float(box_elements[3]))
+            box = (float(box_elements[0]), float(box_elements[1]),
+                   float(box_elements[2]), float(box_elements[3]))
             boxes.append(box)
 
     return boxes
+
 
 def get_bboxes():
     path_to_boxes = r"/bboxes.txt"
@@ -45,10 +50,12 @@ def get_bboxes():
         bboxes_ls = get_boxes(path_to_boxes)
     return bboxes_ls
 
+
 def threshold_gray(img, thresh):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     ind = gray < thresh
     return ind
+
 
 def get_hsv_hist(img):
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -56,39 +63,22 @@ def get_hsv_hist(img):
     h, s, v = hsv[:, :, HUE], hsv[:, :, SATURATION], hsv[:, :, VALUE]
     h_no_ice = h[ind]
     s_no_ice = v[ind]
-    # hist2d, xbins, ybins = np.histogram2d(h.ravel(), s.ravel(), [180, 256], [[0, 180], [0, 256]], normed=True)
-    hist2d, xbins, ybins = np.histogram2d(h_no_ice, s_no_ice, [180, 256], [[0, 180], [0, 256]])#, normed=True)
-    # v_counts, v_bins = np.histogram(v, bins=range(256))
-    # fig = plt.figure(figsize=(18, 10))
-    # fig.add_subplot(121)
-    # plt.hexbin(s_no_ice, h_no_ice)
-    # # plt.xlim([0, 255])
-    # plt.colorbar()
-    # # plt.ylim([0, 180])
-    # plt.title("2D Histogram")
-    # fig.add_subplot(122)
-    # plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-    # plt.title("Image")
-    # fig.show()
 
-    # s_counts, s_bins = np.histogram(s, bins=range(256), normed=True)
-    # h_counts, h_bins = np.histogram(h, bins=range(180))
-    # v_counts, v_bins = np.histogram(v, bins=range(256))
-    # norm = np.linalg.norm(h_counts)
-    # h_counts = h_counts / norm
+    hist2d, xbins, ybins = np.histogram2d(
+        h_no_ice, s_no_ice, [180, 256], [[0, 180], [0, 256]])  #, normed=True)
+
     return hsv, hist2d
+
 
 def crop_to_uniform(img, ratio):
     r, c, channels = img.shape
-    # if c < 24:
-    #     sys.stderr.write(f"{c}<24\n")
-    # if r < 48:
-    #     sys.stderr.write(f"{r}<48\n")
+
     img = cv2.resize(img, (24, 48), interpolation=cv2.INTER_AREA)
     rows, cols, dims = img.shape
     quarter_rows = rows / ratio
     quarter_cols = cols / ratio
-    cropped_img = img[int(quarter_rows):int(quarter_rows * 3), int(quarter_cols):int(quarter_cols * 3)]
+    cropped_img = img[int(quarter_rows):int(quarter_rows * 3),
+                      int(quarter_cols):int(quarter_cols * 3)]
     return cropped_img
 
 
@@ -119,16 +109,19 @@ def sliding_window(image, stepSize, windowSize):
         for x in range(0, image.shape[1], stepSize):
             yield x, y, image[y:y + windowSize[1], x:x + windowSize[0]]
 
+
 def get_peaks(h_counts, num_peaks):
     ind = np.argpartition(h_counts, -num_peaks)[-num_peaks:]
     sorted_ind = ind[np.argsort((-h_counts)[ind])]
     return sorted_ind
+
 
 def get_range(h_counts):
     ranges = funcs.get_hist_ranges(h_counts)
     norm = np.linalg.norm(ranges)
     ranges = ranges / norm
     return ranges
+
 
 def get_sliding_window_hist(img, technique='peaks'):
     peaks_num = 2
@@ -140,8 +133,10 @@ def get_sliding_window_hist(img, technique='peaks'):
     #     num_peaks = 6
     step_size = 6
     windows = sliding_window(img, step_size, (6, 6))
-    num_windows = ceil(img.shape[0] / step_size) * ceil(img.shape[1] / step_size)
-    horizontal_hists = np.zeros((1, num_peaks * num_windows + num_sat_peaks*num_windows))
+    num_windows = ceil(img.shape[0] / step_size) * ceil(
+        img.shape[1] / step_size)
+    horizontal_hists = np.zeros(
+        (1, num_peaks * num_windows + num_sat_peaks * num_windows))
     start = 0
     stop = num_peaks + num_sat_peaks
     for i, window_info in enumerate(windows):
@@ -158,11 +153,13 @@ def get_sliding_window_hist(img, technique='peaks'):
         stop += num_peaks + num_sat_peaks
     return horizontal_hists
 
+
 def convert_to_ints(*args):
     int_list = []
     for num in args:
         int_list.append(int(num))
     return int_list
+
 
 def get_2d_peaks(num_peaks, hist2d):
     flat_hist = hist2d.ravel()
@@ -175,48 +172,39 @@ def get_2d_peaks(num_peaks, hist2d):
         col = (idx % 256)
         row_idxs.append(row)
         col_idxs.append(col)
-    # idxs = np.array(list(zip(row_idxs, col_idxs)))
-
 
     idxs = np.hstack((row_idxs, col_idxs)).ravel()
 
     return idxs
 
+
 def read_ls_input(tlwh_ls):
-    start = time.perf_counter()
     boxes = ast.literal_eval(tlwh_ls)
     boxes = np.array(boxes)
-    print(time.perf_counter() - start)
     return boxes
 
+
 def get_histogram_data(img, tlwh_boxes, arr):
-    # arr = return_val[0]
-    # print(arr.shape)
-    start = time.perf_counter()
-    rows = tlwh_boxes.shape[0]
     for i, box in enumerate(tlwh_boxes):
 
-        # print(f" {box[0]}, {box[1]}, {box[2]}, {box[3]}")
-        bbox_top, bbox_left, bbox_h, bbox_w = convert_to_ints(box[0], box[1], box[2], box[3])
-        # print(f" {bbox_top}, {bbox_left}, {bbox_w}, {bbox_h}")
-        # bbox_right = bbox_left + bbox_w
-        # bbox_bottom = bbox_top + bbox_h
+        bbox_top, bbox_left, bbox_h, bbox_w = convert_to_ints(
+            box[0], box[1], box[2], box[3])
 
-        # print(f"In iteration {i} of get_histogram_data |||| [{bbox_left}:{bbox_right}, {bbox_top}:{bbox_bottom}]")
         imCrop = img[bbox_left:bbox_w, bbox_top:bbox_h]
         uniform_crop = crop_to_uniform(imCrop, 4)
-        # plt.imshow(cv2.cvtColor(uniform_crop, cv2.COLOR_BGR2RGB))
-        # plt.show()
+
         hist_data = get_sliding_window_hist(uniform_crop)
         arr[i, :] = hist_data
-    # return_val[0] = arr
-    # print(f"Time taken for histograms = {time.perf_counter() - start}")
     return arr
 
-# if __name__ == '__main__':
-#     parser = argparse.ArgumentParser(description='Creates clips based on shot times from csv')
-#     parser.add_argument('-tlwh_box', type=str, help='list of bounding boxes in the form of a string')
-#     args = parser.parse_args()
-#
-#     tlwh_boxes = read_ls_input(args.tlwh_box)
-#     get_sliding_window_hist()
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        description='Creates clips based on shot times from csv')
+    parser.add_argument('-tlwh_box',
+                        type=str,
+                        help='list of bounding boxes in the form of a string')
+    args = parser.parse_args()
+
+    tlwh_boxes = read_ls_input(args.tlwh_box)
+    get_sliding_window_hist()

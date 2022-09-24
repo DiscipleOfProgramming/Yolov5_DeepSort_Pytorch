@@ -1,20 +1,14 @@
 from math import ceil
 import cv2
-import numpy
 import numpy as np
-import os
 import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
-import copy
-from scipy.ndimage import gaussian_filter
-from sklearn import preprocessing
-
 """ red = [(0, 30), (331, 360)]
     yellow = (31, 90)
     green = (91, 150)
     cyan = (151, 210)
     blue = (211, 270)
     purple = (270, 330)"""
+
 
 # colors are half their normal ranges
 def get_hist_ranges(h_counts):
@@ -28,13 +22,15 @@ def get_hist_ranges(h_counts):
     # Add the bins within this range
     bins = np.zeros((1, 6))
     # hardcode red
-    r_sum = np.sum(h_counts[red[0][0]:red[0][1]]) + np.sum(h_counts[red[1][0]:red[1][1]])
+    r_sum = np.sum(h_counts[red[0][0]:red[0][1]]) + np.sum(
+        h_counts[red[1][0]:red[1][1]])
     bins[0, 0] = r_sum
     for i, clr_range in enumerate(clr_list):
         start, stop = clr_range
-        bins[0, i+1] = np.sum(h_counts[start:stop])
+        bins[0, i + 1] = np.sum(h_counts[start:stop])
 
     return bins
+
 
 def plot_img_and_hist(img, window, counts, bins):
     fig = plt.figure(figsize=(18, 10))
@@ -63,6 +59,7 @@ def plot_img_and_hist(img, window, counts, bins):
     plt.title("Full image")
     fig.show()
 
+
 def plot_img_and_sat_hist(img, window, counts, bins):
     fig = plt.figure(figsize=(10, 7))
     rows = 1
@@ -89,13 +86,14 @@ def plot_img_and_sat_hist(img, window, counts, bins):
     plt.title("Full image")
     fig.show()
 
+
 def plot_frame_hists(window, iteration, figure, counts, bins):
     first_pos = iteration
     figure.add_subplot(5, 8, first_pos)
     plt.imshow(cv2.cvtColor(window, cv2.COLOR_BGR2RGB))
     # plt.imshow(cv2.cvtColor(window, cv2.COLOR_HSV2RGB))
     plt.title("Image")
-    figure.add_subplot(5, 8, iteration+1)
+    figure.add_subplot(5, 8, iteration + 1)
     plt.bar(bins, counts, width=1)
     plt.title("Hue hist")
     plt.xlim([0, len(bins)])
