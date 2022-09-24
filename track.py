@@ -13,6 +13,7 @@ from yolov5.models.experimental import attempt_load
 from yolov5.utils.datasets import LoadImages, LoadStreams
 from yolov5.utils.general import check_img_size, non_max_suppression, scale_coords, check_imshow, xyxy2xywh
 from yolov5.utils.torch_utils import select_device, time_synchronized
+from yolov5.utils.plots import plot_one_box
 from deep_sort_pytorch.utils.parser import get_config
 from deep_sort_pytorch.deep_sort import DeepSort
 import argparse
@@ -56,8 +57,10 @@ def does_box_overlap(box, other_boxes):
 
 def compute_color_for_labels(label):
     """
-    Simple function that adds fixed color depending on the class
+    Simple function that adds fixed color depending on the id
     """
+    palette = (2 ** 11 - 1, 2 ** 15 - 1, 2 ** 20 - 1)
+
     color = [int((p * (label ** 2 - label + 1)) % 255) for p in palette]
     return tuple(color)
 
@@ -202,7 +205,7 @@ def detect(opt):
                     s += '%g %ss, ' % (n, names[int(c)])  # add to string
 
                 xywhs = xyxy2xywh(det[:, 0:4])
-                confss = det[:, 4]
+                confs = det[:, 4]
                 clss = det[:, 5]
 
                 # pass detections to deepsort
