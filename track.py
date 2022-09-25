@@ -1,10 +1,7 @@
-import logging
-import tracking_helpers as track_helpers
-from collections import deque, Counter, namedtuple
+from collections import deque
 import tensorflow as tf
 from sklearn.cluster import KMeans
 import cluster_hue_sat_funcs as cluster_funcs
-from multiprocessing import Process
 import torch.backends.cudnn as cudnn
 import torch
 import cv2
@@ -26,7 +23,6 @@ from yolov5.utils.general import (
 from yolov5.utils.datasets import LoadImages, LoadStreams
 from yolov5.models.experimental import attempt_load
 from yolov5.utils.google_utils import attempt_download
-import copy
 import sys
 import os
 
@@ -35,7 +31,7 @@ import numpy as np
 import cluster_hue_sat_funcs
 import tracking_helpers
 
-sys.path.insert(0, "." + os.path.sep + "yolov5")
+sys.path.insert(0, os.path.sep + "yolov5")
 os.environ["Path"]
 
 palette = (2**11 - 1, 2**15 - 1, 2**20 - 1)
@@ -159,6 +155,7 @@ def detect(opt):
     imgsz = check_img_size(imgsz, s=stride)  # check img_size
     names = (model.module.names if hasattr(model, "module") else model.names
              )  # get class names
+
     if half:
         model.half()  # to FP16
 
@@ -230,7 +227,7 @@ def detect(opt):
             else:
                 p, s, im0 = path, "", im0s
 
-            # s += '%gx%g ' % img.shape[2:]  # print string
+            s += '%gx%g ' % img.shape[2:]  # print string
             save_path = str(Path(out) / Path(p).name)
 
             if det is not None and len(det):
@@ -239,21 +236,23 @@ def detect(opt):
                                           im0.shape).round()
 
                 # Print results
-                # for c in det[:, -1].unique():
-                #     n = (det[:, -1] == c).sum()  # detections per class
-                #     s += '%g %ss, ' % (n, names[int(c)])  # add to string
+                for c in det[:, -1].unique():
+                    n = (det[:, -1] == c).sum()  # detections per class
+                    s += '%g %ss, ' % (n, names[int(c)])  # add to string
 
                 xywhs = xyxy2xywh(det[:, 0:4])
                 confss = det[:, 4]
                 clss = det[:, 5]
 
                 # pass detections to deepsort
-                outputs = deepsort.update(xywhs.cpu(), confss.cpu(), im0)
+                # print("class =", clss, "class.cpu", clss.cpu())
+                outputs = deepsort.update(xywhs.cpu(), confss.cpu(),
+                                          clss.cpu(), im0)
 
                 if len(outputs) > 0:
                     collect_color_data = True
                     bboxes = outputs[:, :4]
-                    identities = outputs[:, -1]
+                    identities = outputs[:, -2]
 
                     hist_data = np.zeros(
                         (bboxes.shape[0], 32)
@@ -271,7 +270,7 @@ def detect(opt):
                                     random_state=0).fit(cluster_data)
                 elif frame_idx > 25:
                     color_predictions = kmeans.predict(hist_data)
-                    identities = outputs[:, -1]
+                    identities = outputs[:, -2]
                     # TODO Change this to ids in last frame to make indices match
 
                     for predict_class, id in zip(color_predictions,
@@ -283,7 +282,7 @@ def detect(opt):
                 # draw boxes for visualization
                 if len(outputs) > 0:
                     bbox_xyxy = outputs[:, :4]
-                    identities = outputs[:, -1]
+                    identities = outputs[:, -2]
                     draw_boxes(im0, bbox_xyxy, mode_in_class_id_dict,
                                identities)  # TODO uncomment when needed again
                     # to MOT format
@@ -346,7 +345,7 @@ def detect(opt):
                 deepsort.increment_ages()
 
             # Print time (inference + NMS)
-            # print('%sDone. (%.3fs)' % (s, t2 - t1))
+            print('%sDone. (%.3fs)' % (s, t2 - t1))
             print(
                 f"{s} Done. {t2 - t1 + (time.perf_counter() - start_process_time)}"
             )
